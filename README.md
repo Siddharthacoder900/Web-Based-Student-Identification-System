@@ -1,76 +1,68 @@
-# BIET Student Identification System
+# Web-Based Student Identification System
 
-BIET's existing React/Vite application with an Express/Mongoose API for administrator authentication, student records, identity cards, and QR verification.
+**Bansal Institute of Engineering and Technology, Lucknow**
+
+The Web-Based Student Identification System is a BIET administration portal for student records, digital identification, QR scanning, and verification. Its existing React + Vite frontend and Express API are retained. User accounts, invitations, and password reset tokens are stored in MongoDB.
 
 ## Requirements
 
-- Node.js 20 or newer
-- MongoDB (local or hosted)
+- Node.js 18 or newer
+- MongoDB Atlas (required for real accounts, invitations, and password reset; optional for the development demo)
+- A Resend account and verified sender address to deliver password-reset emails
 
 ## Local setup
 
-1. Install dependencies from PowerShell:
+1. Install dependencies:
+
    ```powershell
-   Set-Location "C:\Users\siddh\Desktop\biet_student_identification_frontend"
    npm.cmd install
    ```
-2. Create a MongoDB Atlas cluster and database user (instructions below).
-3. Run the initial administrator setup wizard:
+
+2. Copy `.env.example` to `.env`. For local development without MongoDB, set `JWT_SECRET` to a randomly generated value of at least 32 characters. For example:
+
    ```powershell
-   Set-Location "C:\Users\siddh\Desktop\biet_student_identification_frontend"
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\scripts\setup-admin.ps1"
+   Copy-Item .env.example .env
+   node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
    ```
-   The wizard masks the MongoDB URI and administrator password, generates a random 48-byte JWT secret without displaying it, writes a Git-ignored `.env`, and calls the existing `npm.cmd run create-admin` bootstrap. It reuses (and never overwrites) an existing `.env`. Choose a unique administrator password of at least 12 characters.
-   To check the script and project wiring without entering credentials or changing `.env`, append `-ValidateOnly` to that PowerShell command.
-4. Start the API and frontend together:
+
+   Put the generated value in `.env`. The example enables a development-only, in-memory demo administrator:
+
+   - `DEMO_AUTH_ENABLED=true`
+   - `DEMO_ADMIN_EMAIL=admin@biet.ac.in`
+   - `DEMO_ADMIN_PASSWORD=BietDemo@2026`
+
+   This provider is enabled only when `NODE_ENV=development`. When MongoDB is available, the app provisions the demo account in the existing `User` model and authenticates against MongoDB. Only when MongoDB is unavailable does the isolated demo provider validate against a bcrypt hash held in server memory. It does not accept credentials for other accounts or claim database authentication.
+
+3. To enable MongoDB-backed accounts, set `MONGODB_URI` to the MongoDB Atlas connection string. Configure `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` with an initial authorized administrator's credentials. The password must be at least 12 characters and include uppercase, lowercase, and numeric characters. The account is created only when the database has no administrator. Remove the bootstrap password from `.env` after the account is provisioned. Set `OFFICIAL_EMAIL_DOMAINS` to the allowed email domains; it defaults to `biet.ac.in`.
+
+4. Set `RESEND_API_KEY`, `EMAIL_FROM`, and `APP_BASE_URL` to enable password reset. Without these values, reset requests return a setup error and no email is reported as sent.
+
+5. Start the frontend and API:
+
    ```powershell
    npm.cmd run dev
    ```
-   The API listens on **port 5001** and Vite serves the frontend on **port 5173**. Vite proxies `/api` requests to `http://localhost:5001`. Alternatively, in separate PowerShell windows run `npm.cmd run dev:server` and `npm.cmd run dev:client -- --port 5173`. `npm.cmd run start:server` starts the API without watch mode.
-5. Check the API/database connection:
-   ```powershell
-   Invoke-RestMethod http://localhost:5001/api/health
-   ```
-   A working setup reports `status: ok` and `database: connected`. Then open `http://localhost:5173/admin/login` and sign in with the email and password entered into the local wizard.
-6. Tests and production build: `npm.cmd test` and `npm.cmd run build`.
 
-The API requires `MONGODB_URI` and a strong `JWT_SECRET`; it does not fall back to in-memory data. MongoDB must be reachable for login and data operations.
+6. Open [http://localhost:5173](http://localhost:5173). The API health check is [http://localhost:5001/api/health](http://localhost:5001/api/health).
 
-### MongoDB Atlas setup
+The demo credentials are **admin@biet.ac.in / BietDemo@2026** when the example development configuration is enabled. The frontend proxies `/api` requests to `http://localhost:5001` by default (or the `PORT` specified in `.env`); override this with `API_PROXY_TARGET` if necessary. Keep the development terminal open while using the app. In production, explicitly set `NODE_ENV=production` and `DEMO_AUTH_ENABLED=false`; demo authentication is rejected outside development. Serve the Vite build from Express or use same-site frontend/API origins listed in `CORS_ORIGINS`. Production cookies require HTTPS.
 
-1. Create a MongoDB Atlas cluster and a dedicated database user for this app. Grant `readWrite` on the `biet_student_identity` database only. Do not use your Atlas website sign-in as the database credentials.
-2. In **Network Access**, allowlist your current public IP. Avoid `0.0.0.0/0`, which allows connections from anywhere.
-3. In **Database → Connect → Drivers**, copy the Node.js connection URI. Replace the username and password placeholders with the database user's credentials and specify a database name such as `biet_student_identity`.
-4. Percent-encode reserved characters in the database password (`@`, `:`, `/`, `?`, `#`, etc.) before using it in the URI.
-5. Run the setup wizard and paste the URI at its masked prompt. It is saved only in the local, Git-ignored `.env`; never paste the URI into chat or commit/share `.env`.
-6. If setup cannot connect, check that the cluster is active, your current IP is allowlisted, database credentials are correct, and reserved password characters are URL-encoded. The wizard keeps the `.env` for retries; edit it locally if the URI needs correction, then rerun the wizard.
+## Restricted administrator registration
 
-### Administrator bootstrap details
+Public registration is not enabled. Sign in as an administrator and create an invitation in **Settings → Invite an administrator**. The authenticated `POST /api/auth/invitations` API returns a single-use invitation code that expires after 24 hours; share it only with that invited official. The invitee enters the code at `/signup`. The server validates the invitation and assigns the administrator role; clients cannot choose roles.
 
-`npm.cmd run create-admin` is the existing one-time database setup mechanism. It reads `ADMIN_NAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` from the process environment, requires at least 12 password characters, bcrypt-hashes the password, and refuses duplicate email addresses. The PowerShell wizard supplies these values to the child process without writing them to `.env`. No default administrator credentials are defined.
+The invitation endpoint accepts only domains listed in `OFFICIAL_EMAIL_DOMAINS`. Login, registration, invitation creation, and password-reset endpoints have per-process IP-based rate limits.
 
-For production, serve the built `dist/` files over HTTPS and configure the web server/reverse proxy to route same-origin `/api` requests to the Express API. Set `PUBLIC_APP_URL` to the public frontend origin so issued QR codes resolve to the verification page.
+## Authentication and password reset
 
-## Routes
+Successful sign-in and authorized registration set an HTTP-only, same-site session cookie. Session cookies are secure in production. Password reset tokens are randomly generated, stored only as hashes, expire after 30 minutes, and are single-use. The email endpoint returns the same message whether or not an account exists.
 
-- `/` — Public BIET homepage with database-backed aggregate statistics
-- `/admin/login` — Administrator sign-in
-- `/admin/dashboard` — Database-backed overview
-- `/admin/students` — Search, filter, export, and archive student records
-- `/admin/students/add` — Register a student and optionally upload a photograph
-- `/admin/students/:studentId` — View and edit a student record
-- `/admin/id-cards` — Issue or rotate identity cards and download printable PDFs
-- `/admin/qr-scanner` — Camera or manual QR verification
-- `/admin/verifications` — Verification history
-- `/admin/settings` — Signed-in account and API/database health
-- `/verify/:token` — Limited public verification result for a QR token
+Password reset delivery uses the Resend API. Configure `RESEND_API_KEY`, `EMAIL_FROM`, and `APP_BASE_URL`; use a verified sender address and an HTTPS base URL in production.
 
-## Security and operations
+## Build and tests
 
-- Administrator passwords are bcrypt-hashed. Admin sessions use expiring, HTTP-only cookies; login attempts are rate-limited.
-- There is no public administrator registration or built-in demo password. Use the one-time setup command to create the first administrator.
-- JPEG/PNG student photographs are size- and file-signature-validated, stored outside the public web root, and served only to authenticated administrators.
-- QR codes contain a cryptographically random verification URL. MongoDB stores only the token hash; verification logs never include the token. Public verification discloses only limited identity details.
-- Student removal is a soft archive. Archiving revokes active ID cards rather than deleting the student history.
-- Add the college-provided, unmodified logo at `public/assets/biet-logo.jpg`. The repository does not currently contain the official image; the existing brand component uses its text fallback until the original asset is supplied.
-- Student data and credentials are sensitive. Use a protected MongoDB deployment, TLS, backups, access controls, and institution-approved privacy/retention policies before production use.
+```powershell
+npm.cmd run build
+```
+
+There is currently no automated backend test script in `package.json`. Authentication integration tests require a reachable MongoDB instance and, for delivery tests, a configured email provider. Student records continue to use the project's existing in-memory store.
